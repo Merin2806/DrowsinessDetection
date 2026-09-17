@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.StackPane?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.Pane?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.geometry.Insets?>
+
+<BorderPane
+    xmlns="http://javafx.com/javafx/21"
+    xmlns:fx="http://javafx.com/fxml/1"
+    fx:controller="com.driveguard.controller.DrowsinessController"
+    styleClass="root-pane">
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         HEADER BAR
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <top>
+        <HBox styleClass="header-bar" alignment="CENTER_LEFT" spacing="12">
+            <padding><Insets top="14" right="24" bottom="14" left="24"/></padding>
+
+            <!-- Shield icon + brand name -->
+            <Label text="🛡" styleClass="header-icon"/>
+            <VBox spacing="1">
+                <Label text="DRIVEGUARD AI"            styleClass="header-title"/>
+                <Label text="Real-Time Driver Drowsiness Detection"
+                       styleClass="header-subtitle"/>
+            </VBox>
+
+            <Region HBox.hgrow="ALWAYS"/>
+
+            <!-- Right side badge -->
+            <HBox styleClass="header-badge" alignment="CENTER" spacing="6">
+                <Label text="●" styleClass="badge-dot"/>
+                <Label text="AI MONITORING SYSTEM" styleClass="badge-text"/>
+            </HBox>
+        </HBox>
+    </top>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         MAIN CONTENT  (Camera panel left | Status panel right)
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <center>
+        <HBox styleClass="main-content" spacing="14">
+            <padding><Insets top="14" right="14" bottom="14" left="14"/></padding>
+
+            <!-- ─────────────────────────────────────────────────────────────
+                 CAMERA CARD (takes all remaining width)
+                 ───────────────────────────────────────────────────────────── -->
+            <VBox styleClass="camera-card" HBox.hgrow="ALWAYS" spacing="10">
+                <padding><Insets top="14" right="14" bottom="14" left="14"/></padding>
+
+                <!-- Card header -->
+                <HBox alignment="CENTER_LEFT" spacing="8">
+                    <Label text="LIVE CAMERA FEED" styleClass="card-section-title"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                    <Label text="OpenCV 4.9 · Haar Cascade" styleClass="tech-badge"/>
+                </HBox>
+
+                <!-- Camera image area -->
+                <StackPane styleClass="camera-container" VBox.vgrow="ALWAYS">
+                    <!-- Placeholder shown when camera is not active -->
+                    <VBox fx:id="placeholderLabel" alignment="CENTER" spacing="12"
+                          styleClass="camera-placeholder-box">
+                        <Label text="📷" styleClass="placeholder-icon"/>
+                        <Label text="Camera not started" styleClass="placeholder-text"/>
+                        <Label text="Press  ▶ START CAMERA  to begin"
+                               styleClass="placeholder-sub"/>
+                    </VBox>
+
+                    <!-- Live video feed (covers placeholder when active) -->
+                    <ImageView fx:id="cameraView"
+                               fitWidth="760" fitHeight="520"
+                               preserveRatio="true"
+                               smooth="true"/>
+                </StackPane>
+            </VBox>
+
+            <!-- ─────────────────────────────────────────────────────────────
+                 STATUS PANEL (right side)
+                 ───────────────────────────────────────────────────────────── -->
+            <VBox styleClass="status-panel" spacing="10"
+                  minWidth="270" maxWidth="300">
+
+                <!-- ── Driver Status (hero card) ──────────────────────── -->
+                <VBox styleClass="status-card hero-card" spacing="4">
+                    <padding><Insets top="18" right="16" bottom="18" left="16"/></padding>
+                    <Label text="DRIVER STATUS" styleClass="card-label"/>
+                    <Label fx:id="driverStatusValueLabel" text="—"
+                           styleClass="status-value large-status status-neutral"/>
+                </VBox>
+
+                <!-- ── Eye Status ─────────────────────────────────────── -->
+                <VBox styleClass="status-card" spacing="4">
+                    <padding><Insets top="12" right="16" bottom="12" left="16"/></padding>
+                    <HBox alignment="CENTER_LEFT" spacing="6">
+                        <Label text="👁" styleClass="card-icon"/>
+                        <Label text="EYE STATUS" styleClass="card-label"/>
+                    </HBox>
+                    <Label fx:id="eyeStatusValueLabel" text="—"
+                           styleClass="status-value status-neutral"/>
+                </VBox>
+
+                <!-- ── Face Detection ─────────────────────────────────── -->
+                <VBox styleClass="status-card" spacing="4">
+                    <padding><Insets top="12" right="16" bottom="12" left="16"/></padding>
+                    <HBox alignment="CENTER_LEFT" spacing="6">
+                        <Label text="🔍" styleClass="card-icon"/>
+                        <Label text="FACE DETECTION" styleClass="card-label"/>
+                    </HBox>
+                    <Label fx:id="faceDetectionValueLabel" text="—"
+                           styleClass="status-value status-neutral"/>
+                </VBox>
+
+                <!-- ── Monitoring ─────────────────────────────────────── -->
+                <VBox styleClass="status-card" spacing="4">
+                    <padding><Insets top="12" right="16" bottom="12" left="16"/></padding>
+                    <HBox alignment="CENTER_LEFT" spacing="6">
+                        <Label text="⚙" styleClass="card-icon"/>
+                        <Label text="MONITORING" styleClass="card-label"/>
+                    </HBox>
+                    <Label fx:id="monitoringValueLabel" text="STOPPED"
+                           styleClass="status-value status-neutral"/>
+                </VBox>
+
+                <Region VBox.vgrow="ALWAYS"/>
+
+                <!-- ── Control Buttons ────────────────────────────────── -->
+                <VBox styleClass="button-panel" spacing="9">
+                    <padding><Insets top="14" right="14" bottom="14" left="14"/></padding>
+                    <Label text="CONTROLS" styleClass="card-label"/>
+                    <Button fx:id="startButton"
+                            text="▶   START CAMERA"
+                            onAction="#onStartCamera"
+                            maxWidth="Infinity"
+                            styleClass="btn-primary"/>
+                    <Button fx:id="stopButton"
+                            text="⏹   STOP CAMERA"
+                            onAction="#onStopCamera"
+                            maxWidth="Infinity"
+                            disable="true"
+                            styleClass="btn-secondary"/>
+                    <Separator styleClass="divider"/>
+                    <Button text="✕   EXIT"
+                            onAction="#onExit"
+                            maxWidth="Infinity"
+                            styleClass="btn-danger"/>
+                </VBox>
+
+            </VBox>
+        </HBox>
+    </center>
+
+    <!-- ═══════════════════════════════════════════════════════════════════════
+         STATUS BAR (bottom)
+         ═══════════════════════════════════════════════════════════════════════ -->
+    <bottom>
+        <HBox styleClass="status-bar" alignment="CENTER_LEFT" spacing="10">
+            <padding><Insets top="9" right="20" bottom="9" left="20"/></padding>
+            <Label text="●" styleClass="status-dot"/>
+            <Label fx:id="statusBarLabel"
+                   text="Initializing system..."
+                   styleClass="status-bar-label"/>
+        </HBox>
+    </bottom>
+
+</BorderPane>
