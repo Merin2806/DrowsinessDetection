@@ -8,3 +8,21 @@ target/
 .settings/
 .DS_Store
 Thumbs.db
+
+# ── ML Dataset — keep outside the project, never commit ────────────────────
+# The dataset path is passed as a runtime argument to EyeSvmTrainer
+data/
+dataset/
+datasets/
+MRL*/
+mrl*/
+*.pgm
+
+# ── Trained model artifacts ─────────────────────────────────────────────────
+# model/eye_svm.yml is small (~1 MB) and IS committed for reproducibility.
+# Large intermediates are excluded:
+model/*.bin
+model/*.dat
+
+# ── OpenCV temporary files ──────────────────────────────────────────────────
+opencv_*.tmp

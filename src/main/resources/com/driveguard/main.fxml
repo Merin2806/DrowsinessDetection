@@ -60,7 +60,7 @@
                 <HBox alignment="CENTER_LEFT" spacing="8">
                     <Label text="LIVE CAMERA FEED" styleClass="card-section-title"/>
                     <Region HBox.hgrow="ALWAYS"/>
-                    <Label text="OpenCV 4.9 · Haar Cascade" styleClass="tech-badge"/>
+                    <Label text="OpenCV · HOG + Linear SVM (86.5%)" styleClass="tech-badge"/>
                 </HBox>
 
                 <!-- Camera image area -->
@@ -104,6 +104,28 @@
                         <Label text="EYE STATUS" styleClass="card-label"/>
                     </HBox>
                     <Label fx:id="eyeStatusValueLabel" text="—"
+                           styleClass="status-value status-neutral"/>
+                </VBox>
+
+                <!-- ── AI Prediction (HOG + Linear SVM) ────────────────── -->
+                <VBox styleClass="status-card" spacing="4">
+                    <padding><Insets top="12" right="16" bottom="12" left="16"/></padding>
+                    <HBox alignment="CENTER_LEFT" spacing="6">
+                        <Label text="🧠" styleClass="card-icon"/>
+                        <Label text="AI PREDICTION" styleClass="card-label"/>
+                    </HBox>
+                    <Label fx:id="aiPredictionValueLabel" text="—"
+                           styleClass="status-value status-neutral"/>
+                </VBox>
+
+                <!-- ── Sleepy Frame Counter ────────────────────────────── -->
+                <VBox styleClass="status-card" spacing="4">
+                    <padding><Insets top="12" right="16" bottom="12" left="16"/></padding>
+                    <HBox alignment="CENTER_LEFT" spacing="6">
+                        <Label text="⏱" styleClass="card-icon"/>
+                        <Label text="SLEEPY FRAMES" styleClass="card-label"/>
+                    </HBox>
+                    <Label fx:id="sleepyFramesValueLabel" text="0 / 20"
                            styleClass="status-value status-neutral"/>
                 </VBox>
 

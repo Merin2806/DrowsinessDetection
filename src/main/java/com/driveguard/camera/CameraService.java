@@ -40,6 +40,7 @@ public class CameraService {
     // ── Services ──────────────────────────────────────────────────────────
     private final FaceDetector        faceDetector;
     private final EyeDetector         eyeDetector;
+    private final com.driveguard.ml.EyeSvmClassifier eyeSvmClassifier;
     private final DrowsinessDetector  drowsinessDetector;
 
     /** Called on the JavaFX Application Thread with (fxImage, result) per frame. */
@@ -50,16 +51,25 @@ public class CameraService {
     private Thread       captureThread;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
-    // ── Constructor ───────────────────────────────────────────────────────
+    // ── Constructors ──────────────────────────────────────────────────────
+
+    public CameraService(FaceDetector faceDetector,
+                         EyeDetector eyeDetector,
+                         com.driveguard.ml.EyeSvmClassifier eyeSvmClassifier,
+                         DrowsinessDetector drowsinessDetector,
+                         BiConsumer<Image, DetectionResult> frameCallback) {
+        this.faceDetector       = faceDetector;
+        this.eyeDetector        = eyeDetector;
+        this.eyeSvmClassifier   = eyeSvmClassifier;
+        this.drowsinessDetector = drowsinessDetector;
+        this.frameCallback      = frameCallback;
+    }
 
     public CameraService(FaceDetector faceDetector,
                          EyeDetector eyeDetector,
                          DrowsinessDetector drowsinessDetector,
                          BiConsumer<Image, DetectionResult> frameCallback) {
-        this.faceDetector       = faceDetector;
-        this.eyeDetector        = eyeDetector;
-        this.drowsinessDetector = drowsinessDetector;
-        this.frameCallback      = frameCallback;
+        this(faceDetector, eyeDetector, null, drowsinessDetector, frameCallback);
     }
 
     // ── Public API ────────────────────────────────────────────────────────
@@ -126,68 +136,155 @@ public class CameraService {
                 continue;
             }
 
-            // ── Pre-process for detection ─────────────────────────────────
-            // Convert to grayscale (Haar cascade expects single-channel input)
+            // ── Pre-process for face detection ────────────────────────────
             Imgproc.cvtColor(frame, grayFrame, Imgproc.COLOR_BGR2GRAY);
-            // Equalise histogram to improve detection under variable lighting
             Imgproc.equalizeHist(grayFrame, grayFrame);
 
             // ── Face Detection ────────────────────────────────────────────
-            Rect[] faces     = faceDetector.detect(grayFrame);
+            Rect[] faces = faceDetector.detect(grayFrame);
             boolean faceFound = faces.length > 0;
-            boolean eyesFound = false;
             int currentEyeCount = 0;
+            DetectionResult result;
 
             if (faceFound) {
-                // Use the largest detected face (driver is closest to camera)
+                // Use largest detected face (driver is closest to camera)
                 Rect face = largestRect(faces);
 
-                // Draw green rectangle around the detected face
-                Imgproc.rectangle(frame, face.tl(), face.br(), COLOUR_GREEN, LINE_THICKNESS);
-                Imgproc.putText(frame, "FACE", new Point(face.x, face.y - 6),
-                        Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, COLOUR_GREEN, 1);
+                // ── Anthropometric Fixed Eye ROI Estimation ───────────────────
+                // Calculate expected left and right eye locations based on facial geometry:
+                //   • Vertical: 23% to 51% from the top of the face box (height: 28%)
+                //   • Screen-Left Eye (Subject Right): 15% to 45% of face width (width: 30%)
+                //   • Screen-Right Eye (Subject Left): 55% to 85% of face width (width: 30%)
+                // This produces ~1:1 square ROIs that encompass eyelids whether open or closed.
+                int leftX  = face.x + (int) (face.width * 0.15);
+                int leftY  = face.y + (int) (face.height * 0.23);
+                int leftW  = (int) (face.width * 0.30);
+                int leftH  = (int) (face.height * 0.28);
 
-                // ── Eye Detection inside the face region ──────────────────
-                // Restrict to the upper 60% of the face — eyes live there.
-                // This prevents the mouth/chin from generating false eye hits.
-                int roiY      = face.y;
-                int roiHeight = (int) (face.height * 0.60);
+                int rightX = face.x + (int) (face.width * 0.55);
+                int rightY = face.y + (int) (face.height * 0.23);
+                int rightW = (int) (face.width * 0.30);
+                int rightH = (int) (face.height * 0.28);
 
-                // Guard against out-of-bounds (should not happen with valid face rects)
-                roiHeight = Math.min(roiHeight, grayFrame.rows() - roiY);
+                Rect leftEyeRoi  = clampRect(new Rect(leftX, leftY, leftW, leftH), frame.cols(), frame.rows());
+                Rect rightEyeRoi = clampRect(new Rect(rightX, rightY, rightW, rightH), frame.cols(), frame.rows());
 
-                Rect  eyeSearchArea  = new Rect(face.x, roiY, face.width, roiHeight);
-                Mat   faceGrayRoi    = grayFrame.submat(eyeSearchArea);
-                Rect[] eyes          = eyeDetector.detect(faceGrayRoi);
-                currentEyeCount      = eyes.length;
+                // ── AI SVM Inference on Fixed ROIs ────────────────────────────
+                // Crop ROIs directly from unannotated BGR frame before drawing any boxes.
+                // Preprocessing (Grayscale -> EqualizeHist -> Resize 32x32 -> HOG 324)
+                // is executed identically to training.
+                com.driveguard.ml.EyeSvmClassifier.Prediction leftEyePred  = com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE;
+                com.driveguard.ml.EyeSvmClassifier.Prediction rightEyePred = com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE;
 
-                // At least ONE eye detected → eyes are considered open
-                if (currentEyeCount >= 1) {
-                    eyesFound = true;
-                    for (Rect eye : eyes) {
-                        // Translate eye coords from face-ROI space to full-frame space
-                        Point eyeTl = new Point(face.x + eye.x,           face.y + eye.y);
-                        Point eyeBr = new Point(face.x + eye.x + eye.width, face.y + eye.y + eye.height);
-                        Imgproc.rectangle(frame, eyeTl, eyeBr, COLOUR_YELLOW, LINE_THICKNESS);
-                        Imgproc.putText(frame, "EYE", eyeTl,
-                                Imgproc.FONT_HERSHEY_SIMPLEX, 0.4, COLOUR_YELLOW, 1);
+                if (leftEyeRoi != null && leftEyeRoi.width >= 8 && leftEyeRoi.height >= 8) {
+                    Mat leftMat = frame.submat(leftEyeRoi);
+                    if (eyeSvmClassifier != null) {
+                        leftEyePred = eyeSvmClassifier.predict(leftMat);
                     }
+                    leftMat.release();
                 }
 
-                faceGrayRoi.release();
-            }
+                if (rightEyeRoi != null && rightEyeRoi.width >= 8 && rightEyeRoi.height >= 8) {
+                    Mat rightMat = frame.submat(rightEyeRoi);
+                    if (eyeSvmClassifier != null) {
+                        rightEyePred = eyeSvmClassifier.predict(rightMat);
+                    }
+                    rightMat.release();
+                }
 
-            // ── Drowsiness State Machine ──────────────────────────────────
-            DetectionResult result = drowsinessDetector.process(faceFound, eyesFound);
+                // ── Combine Eye Predictions ───────────────────────────────────
+                //   • Both AWAKE -> AWAKE
+                //   • Both SLEEPY -> SLEEPY
+                //   • One AWAKE & one SLEEPY -> Conservative strategy (AWAKE) to avoid false alarms
+                com.driveguard.ml.EyeSvmClassifier.Prediction overallAiPred;
+                if (leftEyePred == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY &&
+                    rightEyePred == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY) {
+                    overallAiPred = com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY;
+                } else if (leftEyePred == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE ||
+                           rightEyePred == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE) {
+                    overallAiPred = com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE;
+                } else {
+                    overallAiPred = com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE;
+                }
+
+                // ── Haar Eye Detection (For Debugging / Visualization) ────────
+                // Run on upper 60% of face; failure to detect does NOT block SVM decision.
+                int roiY      = face.y;
+                int roiHeight = (int) (face.height * 0.60);
+                roiHeight     = Math.min(roiHeight, grayFrame.rows() - roiY);
+                Rect eyeSearchArea = new Rect(face.x, roiY, face.width, roiHeight);
+                Mat faceGrayRoi    = grayFrame.submat(eyeSearchArea);
+                Rect[] haarEyes    = eyeDetector.detect(faceGrayRoi);
+                currentEyeCount    = haarEyes.length;
+                faceGrayRoi.release();
+
+                // ── Update Drowsiness State Machine ───────────────────────────
+                result = drowsinessDetector.process(faceFound, currentEyeCount, overallAiPred, leftEyePred, rightEyePred);
+
+                // ── Draw Annotations on Video Frame ───────────────────────────
+                // 1. Face box
+                Imgproc.rectangle(frame, face.tl(), face.br(), COLOUR_GREEN, LINE_THICKNESS);
+                Imgproc.putText(frame, "FACE", new Point(face.x, Math.max(16, face.y - 6)),
+                        Imgproc.FONT_HERSHEY_SIMPLEX, 0.5, COLOUR_GREEN, 1);
+
+                // 2. Fixed Eye ROIs with AI Labels
+                if (leftEyeRoi != null) {
+                    Scalar leftColor = (leftEyePred == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY)
+                            ? COLOUR_RED : COLOUR_GREEN;
+                    Imgproc.rectangle(frame, leftEyeRoi.tl(), leftEyeRoi.br(), leftColor, LINE_THICKNESS);
+                    Imgproc.putText(frame, "L: " + leftEyePred.name(),
+                            new Point(leftEyeRoi.x, Math.max(14, leftEyeRoi.y - 4)),
+                            Imgproc.FONT_HERSHEY_SIMPLEX, 0.45, leftColor, 1);
+                }
+
+                if (rightEyeRoi != null) {
+                    Scalar rightColor = (rightEyePred == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY)
+                            ? COLOUR_RED : COLOUR_GREEN;
+                    Imgproc.rectangle(frame, rightEyeRoi.tl(), rightEyeRoi.br(), rightColor, LINE_THICKNESS);
+                    Imgproc.putText(frame, "R: " + rightEyePred.name(),
+                            new Point(rightEyeRoi.x, Math.max(14, rightEyeRoi.y - 4)),
+                            Imgproc.FONT_HERSHEY_SIMPLEX, 0.45, rightColor, 1);
+                }
+
+                // 3. Optional Haar detected eye boxes in cyan (debug)
+                for (Rect hEye : haarEyes) {
+                    Point hTl = new Point(face.x + hEye.x, roiY + hEye.y);
+                    Point hBr = new Point(face.x + hEye.x + hEye.width, roiY + hEye.y + hEye.height);
+                    Imgproc.rectangle(frame, hTl, hBr, new Scalar(255, 200, 0), 1);
+                }
+
+            } else {
+                // No face detected
+                result = drowsinessDetector.process(false, 0,
+                        com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE,
+                        com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE,
+                        com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE);
+            }
 
             // ── Annotate frame with status overlay ────────────────────────
             annotateFrame(frame, result);
 
             // ── Draw Diagnostics ──────────────────────────────────────────
-            String diag1 = "Eyes detected: " + currentEyeCount;
-            String diag2 = "Closed frames: " + result.getClosedFrameCount() + "/" + drowsinessDetector.getThreshold();
-            Imgproc.putText(frame, diag1, new Point(8, 120), Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, new Scalar(255, 255, 0), 2);
-            Imgproc.putText(frame, diag2, new Point(8, 145), Imgproc.FONT_HERSHEY_SIMPLEX, 0.6, new Scalar(255, 255, 0), 2);
+            Scalar leftColor = (result.getLeftEyePrediction() == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY)
+                    ? COLOUR_RED : COLOUR_GREEN;
+            Scalar rightColor = (result.getRightEyePrediction() == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY)
+                    ? COLOUR_RED : COLOUR_GREEN;
+            Scalar overallColor = switch (result.getAiPrediction()) {
+                case AWAKE   -> COLOUR_GREEN;
+                case SLEEPY  -> COLOUR_RED;
+                case NO_EYE  -> COLOUR_YELLOW;
+            };
+
+            Imgproc.putText(frame, "Left Eye AI: "  + result.getLeftEyePrediction().name(),
+                    new Point(8, 115), Imgproc.FONT_HERSHEY_SIMPLEX, 0.50, leftColor, 2);
+            Imgproc.putText(frame, "Right Eye AI: " + result.getRightEyePrediction().name(),
+                    new Point(8, 138), Imgproc.FONT_HERSHEY_SIMPLEX, 0.50, rightColor, 2);
+            Imgproc.putText(frame, "Overall AI: "   + result.getAiPrediction().name(),
+                    new Point(8, 161), Imgproc.FONT_HERSHEY_SIMPLEX, 0.55, overallColor, 2);
+            Imgproc.putText(frame, "Sleepy Frames: " + result.getClosedFrameCount() + "/" + drowsinessDetector.getThreshold(),
+                    new Point(8, 184), Imgproc.FONT_HERSHEY_SIMPLEX, 0.50, new Scalar(255, 255, 0), 2);
+            Imgproc.putText(frame, "Haar Eyes: " + currentEyeCount,
+                    new Point(8, 207), Imgproc.FONT_HERSHEY_SIMPLEX, 0.45, new Scalar(200, 200, 200), 1);
 
             // ── Convert Mat (BGR) → JavaFX Image ─────────────────────────
             Image fxImage = matToFxImage(frame);
@@ -262,6 +359,16 @@ public class CameraService {
             if (r.area() > largest.area()) largest = r;
         }
         return largest;
+    }
+
+    /** Ensure rectangle stays strictly within frame boundaries. */
+    private static Rect clampRect(Rect r, int maxW, int maxH) {
+        int x = Math.max(0, r.x);
+        int y = Math.max(0, r.y);
+        int w = Math.min(r.width, maxW - x);
+        int h = Math.min(r.height, maxH - y);
+        if (w <= 0 || h <= 0) return null;
+        return new Rect(x, y, w, h);
     }
 
     private static void sleepMs(long ms) {

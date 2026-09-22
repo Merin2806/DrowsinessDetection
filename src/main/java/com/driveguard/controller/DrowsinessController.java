@@ -37,6 +37,8 @@ public class DrowsinessController {
 
     @FXML private Label driverStatusValueLabel;
     @FXML private Label eyeStatusValueLabel;
+    @FXML private Label aiPredictionValueLabel;
+    @FXML private Label sleepyFramesValueLabel;
     @FXML private Label faceDetectionValueLabel;
     @FXML private Label monitoringValueLabel;
     @FXML private Label statusBarLabel;
@@ -45,10 +47,11 @@ public class DrowsinessController {
     @FXML private Button stopButton;
 
     // ── Services ──────────────────────────────────────────────────────────────
-    private CameraService   cameraService;
-    private AlertService    alertService;
-    private FaceDetector    faceDetector;
-    private EyeDetector     eyeDetector;
+    private CameraService                      cameraService;
+    private AlertService                       alertService;
+    private FaceDetector                       faceDetector;
+    private EyeDetector                        eyeDetector;
+    private com.driveguard.ml.EyeSvmClassifier eyeSvmClassifier;
 
     /** Track the previous driver status so we only trigger/stop alert on transitions. */
     private DriverStatus previousStatus = DriverStatus.WAITING;
@@ -60,19 +63,18 @@ public class DrowsinessController {
         alertService = new AlertService();
         applyStoppedState();
 
-        // Pre-load cascade classifiers in a background thread.
-        // This avoids a brief UI freeze when the user first clicks START.
+        // Pre-load cascade classifiers and SVM model once in background thread.
         Thread initThread = new Thread(() -> {
             try {
-                faceDetector = new FaceDetector();
-                eyeDetector  = new EyeDetector();
+                faceDetector     = new FaceDetector();
+                eyeDetector      = new EyeDetector();
+                eyeSvmClassifier = new com.driveguard.ml.EyeSvmClassifier();
                 Platform.runLater(() ->
-                    statusBarLabel.setText("Ready. Press START CAMERA to begin monitoring."));
-            } catch (IOException e) {
+                    statusBarLabel.setText("Ready. Trained SVM Model Loaded (86.5% Acc). Press START CAMERA."));
+            } catch (Exception e) {
                 Platform.runLater(() -> showError(
-                    "Cascade Load Error",
-                    "Could not load Haar cascade XML files.\n\n"
-                    + e.getMessage()));
+                    "Model / Detector Load Error",
+                    "Could not load cascades or trained SVM model.\n\n" + e.getMessage()));
             }
         }, "DriveGuard-InitThread");
         initThread.setDaemon(true);
@@ -92,7 +94,7 @@ public class DrowsinessController {
         try {
             DrowsinessDetector drowsinessDetector = new DrowsinessDetector();
             cameraService = new CameraService(
-                    faceDetector, eyeDetector, drowsinessDetector,
+                    faceDetector, eyeDetector, eyeSvmClassifier, drowsinessDetector,
                     this::onFrameReceived);
             cameraService.start();
 
@@ -139,25 +141,63 @@ public class DrowsinessController {
             case NOT_DETECTED-> setLabelState(eyeStatusValueLabel, "NOT DETECTED", "status-neutral");
         }
 
+        // ── AI Prediction card ─────────────────────────────────────────────
+        if (result.isFaceDetected()) {
+            String predText;
+            String styleClass;
+            switch (result.getAiPrediction()) {
+                case AWAKE -> {
+                    styleClass = "status-active";
+                    if (result.getLeftEyePrediction() == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE &&
+                        result.getRightEyePrediction() == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE) {
+                        predText = "AWAKE (L:OK, R:OK)";
+                    } else {
+                        predText = "AWAKE (L:" + result.getLeftEyePrediction().name().charAt(0) +
+                                   ", R:" + result.getRightEyePrediction().name().charAt(0) + ")";
+                    }
+                }
+                case SLEEPY -> {
+                    styleClass = "status-danger";
+                    predText = "SLEEPY (BOTH EYES)";
+                }
+                default -> {
+                    styleClass = "status-neutral";
+                    predText = "NO EYE DETECTED";
+                }
+            }
+            setLabelState(aiPredictionValueLabel, predText, styleClass);
+        } else {
+            setLabelState(aiPredictionValueLabel, "NO EYE DETECTED", "status-neutral");
+        }
+
+        // ── Sleepy Frames Progress card ────────────────────────────────────
+        String framesText = result.getClosedFrameCount() + " / " + result.getSleepyThreshold();
+        if (result.getClosedFrameCount() >= result.getSleepyThreshold()) {
+            setLabelState(sleepyFramesValueLabel, framesText, "status-danger");
+        } else if (result.getClosedFrameCount() > 0) {
+            setLabelState(sleepyFramesValueLabel, framesText, "status-warning");
+        } else {
+            setLabelState(sleepyFramesValueLabel, framesText, "status-neutral");
+        }
+
         // ── Driver Status card + status bar ───────────────────────────────
         DriverStatus current = result.getDriverStatus();
         switch (current) {
             case ACTIVE -> {
                 setLabelState(driverStatusValueLabel, "ACTIVE", "status-active", "large-status");
-                setStatusBar("System is monitoring driver alertness...", false);
+                setStatusBar("AI Monitoring: Driver is Alert", false);
             }
             case DROWSY -> {
                 setLabelState(driverStatusValueLabel, "DROWSY", "status-danger", "large-status");
-                setStatusBar("⚠   DROWSINESS ALERT — Prolonged eye closure detected", true);
+                setStatusBar("⚠   DROWSINESS ALERT — Consecutive Sleepy Frames Exceeded!", true);
             }
             case WAITING -> {
                 setLabelState(driverStatusValueLabel, "WAITING", "status-neutral", "large-status");
-                setStatusBar("Face not detected — please position yourself in front of the camera.", false);
+                setStatusBar("Face not detected — please face the camera.", false);
             }
         }
 
         // ── Alert transition logic ─────────────────────────────────────────
-        // Only call start/stop on state *transitions* — not every frame.
         if (current == DriverStatus.DROWSY && previousStatus != DriverStatus.DROWSY) {
             alertService.startAlert();
         } else if (current != DriverStatus.DROWSY && previousStatus == DriverStatus.DROWSY) {
@@ -177,6 +217,8 @@ public class DrowsinessController {
         setMonitoringState("STOPPED", "status-neutral");
         setLabelState(driverStatusValueLabel, "—", "status-neutral", "large-status");
         setLabelState(eyeStatusValueLabel,    "—", "status-neutral");
+        setLabelState(aiPredictionValueLabel, "—", "status-neutral");
+        setLabelState(sleepyFramesValueLabel, "0 / 20", "status-neutral");
         setLabelState(faceDetectionValueLabel,"—", "status-neutral");
         setStatusBar("Camera stopped. Press START CAMERA to begin monitoring.", false);
         previousStatus = DriverStatus.WAITING;

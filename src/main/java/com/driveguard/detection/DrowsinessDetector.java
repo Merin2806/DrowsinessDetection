@@ -20,51 +20,101 @@ import com.driveguard.model.DetectionResult.EyeStatus;
  */
 public class DrowsinessDetector {
 
-    // ── CONFIGURABLE THRESHOLD — change this one constant to tune sensitivity ──
-    private static final int CLOSED_EYE_THRESHOLD = 20;
+    // ── CONFIGURABLE THRESHOLD — consecutive sleepy frames to trigger drowsiness ──
+    public static final int SLEEPY_FRAME_THRESHOLD = 20;
     // ─────────────────────────────────────────────────────────────────────────
 
     private int closedFrameCount = 0;
     private DriverStatus currentStatus = DriverStatus.WAITING;
 
     /**
-     * Process the detection result for one video frame.
+     * Process the detection and dual-eye AI classification result for one video frame.
      *
      * @param faceDetected true if a face was found in this frame
-     * @param eyesDetected true if at least one eye was found inside the face ROI
+     * @param haarEyeCount number of eye ROIs detected by Haar cascade (for diagnostics only)
+     * @param overallAi AI classification combined from both eyes
+     * @param leftAi AI classification of left fixed eye ROI
+     * @param rightAi AI classification of right fixed eye ROI
      * @return a DetectionResult capturing the updated state
      */
-    public DetectionResult process(boolean faceDetected, boolean eyesDetected) {
+    public DetectionResult process(boolean faceDetected,
+                                   int haarEyeCount,
+                                   com.driveguard.ml.EyeSvmClassifier.Prediction overallAi,
+                                   com.driveguard.ml.EyeSvmClassifier.Prediction leftAi,
+                                   com.driveguard.ml.EyeSvmClassifier.Prediction rightAi) {
 
-        // ── No face ─────────────────────────────────────────────────────────
+        // ── No face detected ────────────────────────────────────────────────
         if (!faceDetected) {
-            // Reset everything; we cannot judge drowsiness without seeing the driver
             closedFrameCount = 0;
             currentStatus    = DriverStatus.WAITING;
-            return new DetectionResult(false, EyeStatus.NOT_DETECTED, DriverStatus.WAITING, 0);
+            return new DetectionResult(false, EyeStatus.NOT_DETECTED, DriverStatus.WAITING, 0,
+                    com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE,
+                    com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE,
+                    com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE,
+                    0, SLEEPY_FRAME_THRESHOLD);
         }
 
-        // ── Face present, eyes visible ───────────────────────────────────────
-        if (eyesDetected) {
-            // Reset the counter — driver is alert
+        EyeStatus eyeStatus;
+
+        // ── Face detected: evaluate SVM classifications ─────────────────────
+        // Decision is driven by AI SVM predictions on fixed eye ROIs, NOT Haar 0-eye count.
+        if (leftAi == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY &&
+            rightAi == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY) {
+            // Both eyes confirmed sleepy/closed by SVM
+            closedFrameCount++;
+            eyeStatus = EyeStatus.CLOSED;
+
+        } else if (leftAi == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE &&
+                   rightAi == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE) {
+            // Both eyes confirmed alert/open by SVM
             closedFrameCount = 0;
-            currentStatus    = DriverStatus.ACTIVE;
-            return new DetectionResult(true, EyeStatus.OPEN, DriverStatus.ACTIVE, 0);
+            eyeStatus = EyeStatus.OPEN;
+
+        } else if ((leftAi == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE && rightAi == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY) ||
+                   (leftAi == com.driveguard.ml.EyeSvmClassifier.Prediction.SLEEPY && rightAi == com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE)) {
+            // Conservative/temporal strategy:
+            // One eye is AWAKE and one is SLEEPY.
+            // A driver with visual awareness in at least one eye is NOT declared drowsy.
+            // Do NOT increment closedFrameCount towards DROWSY.
+            // If the counter was already non-zero (e.g. slight jitter during eye closure),
+            // decay slowly by 1 rather than resetting to 0, but never increase.
+            if (closedFrameCount > 0) {
+                closedFrameCount--;
+            }
+            eyeStatus = EyeStatus.OPEN;
+
+        } else {
+            // Inconclusive or NO_EYE
+            eyeStatus = EyeStatus.NOT_DETECTED;
         }
 
-        // ── Face present, eyes NOT detected ─────────────────────────────────
-        // Could be a real closure or a momentary missed detection. Accumulate.
-        closedFrameCount++;
-
-        if (closedFrameCount >= CLOSED_EYE_THRESHOLD) {
-            // Threshold exceeded → drowsiness confirmed
+        // Evaluate against threshold
+        if (closedFrameCount >= SLEEPY_FRAME_THRESHOLD) {
             currentStatus = DriverStatus.DROWSY;
         } else {
-            // Still within the tolerance window — treat as ACTIVE
             currentStatus = DriverStatus.ACTIVE;
         }
 
-        return new DetectionResult(true, EyeStatus.CLOSED, currentStatus, closedFrameCount);
+        return new DetectionResult(true, eyeStatus, currentStatus, closedFrameCount,
+                overallAi, leftAi, rightAi, haarEyeCount, SLEEPY_FRAME_THRESHOLD);
+    }
+
+    /**
+     * Backward-compatible overload.
+     */
+    public DetectionResult process(boolean faceDetected,
+                                   int eyeCount,
+                                   com.driveguard.ml.EyeSvmClassifier.Prediction aiPrediction) {
+        return process(faceDetected, eyeCount, aiPrediction, aiPrediction, aiPrediction);
+    }
+
+    /**
+     * Backward-compatible overload for boolean eyesDetected.
+     */
+    public DetectionResult process(boolean faceDetected, boolean eyesDetected) {
+        return process(faceDetected, eyesDetected ? 1 : 0,
+                eyesDetected ? com.driveguard.ml.EyeSvmClassifier.Prediction.AWAKE
+                             : com.driveguard.ml.EyeSvmClassifier.Prediction.NO_EYE);
     }
 
     /** Reset detector state (called when camera restarts). */
@@ -73,7 +123,7 @@ public class DrowsinessDetector {
         currentStatus    = DriverStatus.WAITING;
     }
 
-    public int getThreshold()        { return CLOSED_EYE_THRESHOLD; }
+    public int getThreshold()        { return SLEEPY_FRAME_THRESHOLD; }
     public int getClosedFrameCount() { return closedFrameCount;      }
     public DriverStatus getStatus()  { return currentStatus;         }
 }
