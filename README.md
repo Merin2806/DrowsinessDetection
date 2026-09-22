@@ -40,7 +40,7 @@ An AI-based real-time driver drowsiness detection system that uses **HOG (Histog
 
 ## 🔄 Working
 
-```text
+
 Webcam
    ↓
 Face Detection
