@@ -65,15 +65,15 @@ The system considers 20 consecutive sleepy frames as drowsiness and triggers an 
 
 ### Main Dashboard
 
-![Main Dashboard](screenshots/main-dashboard.png)
+![Main Dashboard](./screenshots/main-dashboard.png)
 
 ### Awake Detection
 
-![Awake Detection](screenshots/awake-detection.png)
+![Awake Detection](./screenshots/awake-detection.png)
 
 ### Sleepy Detection
 
-![Sleepy Detection](screenshots/sleepy-detection.png)
+![Sleepy Detection](./screenshots/sleepy-detection.png)
 
 ### Drowsiness Alert
 
