@@ -60,21 +60,28 @@ Drowsiness Detection
 Alert
 The system considers 20 consecutive sleepy frames as drowsiness and triggers an alert.
 
-📸 Screenshots
 
-Create a screenshots folder and add your screenshots here.
+## 📸 Screenshots
 
-Main Dashboard
+### Main Dashboard
 
-Awake Detection
+![Main Dashboard](screenshots/main-dashboard.png)
 
-Sleepy Detection
+### Awake Detection
 
-Drowsiness Alert
+![Awake Detection](screenshots/awake-detection.png)
 
-Model Evaluation
+### Sleepy Detection
 
-▶️ How to Run
+![Sleepy Detection](screenshots/sleepy-detection.png)
+
+### Drowsiness Alert
+
+![Drowsiness Alert](screenshots/drowsiness-alert.png)
+
+
+
+## ▶️ How to Run
 Prerequisites
 
 Install:
@@ -100,14 +107,17 @@ mvn javafx:run
 
 Allow webcam access when prompted.
 
-📚 Reference
+
+
+## 📚 Reference
 
 Inspired by the research paper:
 
 "AI-based Extended Driver Drowsiness Detection and Notification Framework System" – ICOSEC 2025
 
-👩‍💻 Author
+
+
+## 👩‍💻 Author
 
 Merin Joys
-
 Individual Academic Project
