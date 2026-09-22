@@ -77,7 +77,7 @@ The system considers 20 consecutive sleepy frames as drowsiness and triggers an 
 
 ### Drowsiness Alert
 
-![Drowsiness Alert](screenshots/drowsiness-alert.png)
+![Drowsiness Alert](./screenshots/drowsiness-alert.png)
 
 
 
